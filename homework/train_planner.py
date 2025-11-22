@@ -1,9 +1,10 @@
 import sys
 import os
 
-# Make sure Python can import models and datasets from this folder
+# Add parent directory to Python path
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(CURRENT_DIR)
+PARENT_DIR = os.path.dirname(CURRENT_DIR)
+sys.path.append(PARENT_DIR)
 
 import argparse
 import torch
@@ -11,8 +12,11 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
-from homework.datasets.road_dataset import load_data
+from homework.datasets.road_dataset import RoadDataset
 from models import MLPPlanner, TransformerPlanner, CNNPlanner, save_model
+
+from homework.datasets.road_dataset import load_data
+
 
 
 def get_model(name):
