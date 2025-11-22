@@ -6,6 +6,13 @@ from torch.utils.data import DataLoader
 
 from datasets.road_dataset import RoadDataset
 from models import MLPPlanner, TransformerPlanner, CNNPlanner, save_model
+import sys
+import os
+
+# Add parent directory to Python path
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PARENT_DIR = os.path.dirname(CURRENT_DIR)
+sys.path.append(PARENT_DIR)
 
 
 def get_model(name):
