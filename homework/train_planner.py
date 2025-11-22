@@ -54,6 +54,8 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
     return total_loss / len(loader)
 
 
+from datasets.road_dataset import load_data
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, required=True)
@@ -66,25 +68,22 @@ def main():
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # Load dataset
-    train_ds = RoadDataset(split="train")
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
+    # Load training data
+    train_loader = load_data(
+        dataset_path="../drive_data/train",
+        transform_pipeline="default",
+        batch_size=args.batch_size,
+        shuffle=True,
+    )
 
-    # Build model
-    model = get_model(args.model).to(device)
+    # Load validation data (optional)
+    val_loader = load_data(
+        dataset_path="../drive_data/val",
+        transform_pipeline="default",
+        batch_size=args.batch_size,
+        shuffle=False,
+    )
 
-    # Optimizer / Loss
-    criterion = nn.L1Loss()  # Smooth L1 or L1 works best for waypoint regression
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
-
-    # Training loop
-    for epoch in range(args.epochs):
-        loss = train_one_epoch(model, train_loader, optimizer, criterion, device)
-        print(f"Epoch {epoch+1}/{args.epochs} - Loss: {loss:.4f}")
-
-    # Save weights as required by grader
-    save_model(model)
-    print(f"Model saved!")
 
 
 if __name__ == "__main__":
