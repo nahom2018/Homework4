@@ -54,7 +54,7 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
     return total_loss / len(loader)
 
 
-from datasets.road_dataset import load_data
+from homework.datasets.road_dataset import load_data
 
 def main():
     parser = argparse.ArgumentParser()
