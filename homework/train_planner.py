@@ -34,12 +34,14 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
     model.train()
     total_loss = 0.0
 
+    use_cnn = isinstance(model, CNNPlanner)
+
     for batch in loader:
         optimizer.zero_grad()
 
-        if "image" in batch:  # CNN
+        if use_cnn:
             preds = model(batch["image"].to(device))
-        else:  # MLP or Transformer
+        else:
             preds = model(
                 track_left=batch["track_left"].to(device),
                 track_right=batch["track_right"].to(device),
