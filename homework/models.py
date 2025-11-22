@@ -85,18 +85,18 @@ class TransformerPlanner(nn.Module):
         n_waypoints: int = 3,
         d_model: int = 64,
         nhead: int = 4,
-        num_layers: int = 2,
-        dim_feedforward: int = 256,
-        dropout: float = 0.1,
+        num_layers: int = 1,
+        dim_feedforward: int = 128,
+        dropout: float = 0.2,
     ):
         """
         Transformer planner using learned waypoint queries that attend
-        over encoded lane boundary points (left + right).
+        over encoded lane boundary points (left + right + center).
 
-        This version adds:
-        - Side indicator (left/right) in the token features
-        - Positional embeddings for lane points
-        - Small MLP head for stable 2D outputs
+        Each lane token is encoded as:
+            [coord0, coord1, is_left, is_right, is_center]  (5D)
+
+        This is axis-agnostic: it doesn't matter whether coords are (x,y) or (x,z).
         """
         super().__init__()
 
@@ -104,11 +104,11 @@ class TransformerPlanner(nn.Module):
         self.n_waypoints = n_waypoints
         self.d_model = d_model
 
-        # We encode each lane point as (x, z, side_flag)
-        self.point_proj = nn.Linear(3, d_model)
+        # We encode each point as 2 coords + 3 type flags = 5D
+        self.point_proj = nn.Linear(5, d_model)
 
-        # Positional embeddings for the 2 * n_track lane tokens
-        self.track_pos_embed = nn.Embedding(2 * n_track, d_model)
+        # Positional embeddings for all tokens: left + right + center = 3 * n_track
+        self.track_pos_embed = nn.Embedding(3 * n_track, d_model)
 
         # Learned queries (one per waypoint)
         self.query_embed = nn.Embedding(n_waypoints, d_model)
@@ -146,39 +146,43 @@ class TransformerPlanner(nn.Module):
         Returns:
             waypoints: (B, n_waypoints, 2)
         """
-        B, T, _ = track_left.shape  # T = n_track
-
+        B, T, C = track_left.shape  # T = n_track, C = 2
         device = track_left.device
+        dtype = track_left.dtype
 
-        # Build tokens: concatenate left + right with a side flag
-        # side_flag = 0 for left, 1 for right
-        side_left = torch.zeros((B, T, 1), device=device)
-        side_right = torch.ones((B, T, 1), device=device)
+        # Centerline between left and right
+        center = 0.5 * (track_left + track_right)  # (B, T, 2)
 
-        left_feat = torch.cat([track_left, side_left], dim=-1)   # (B, T, 3)
-        right_feat = torch.cat([track_right, side_right], dim=-1)  # (B, T, 3)
+        # Type encodings: [is_left, is_right, is_center]
+        left_type = torch.tensor([1.0, 0.0, 0.0], device=device, dtype=dtype).view(1, 1, 3).expand(B, T, 3)
+        right_type = torch.tensor([0.0, 1.0, 0.0], device=device, dtype=dtype).view(1, 1, 3).expand(B, T, 3)
+        center_type = torch.tensor([0.0, 0.0, 1.0], device=device, dtype=dtype).view(1, 1, 3).expand(B, T, 3)
 
-        # Concatenate along sequence dimension: (B, 2T, 3)
-        tokens = torch.cat([left_feat, right_feat], dim=1)
+        # Build tokens: (coords + type flags)
+        left_tokens = torch.cat([track_left, left_type], dim=-1)    # (B, T, 5)
+        right_tokens = torch.cat([track_right, right_type], dim=-1) # (B, T, 5)
+        center_tokens = torch.cat([center, center_type], dim=-1)    # (B, T, 5)
+
+        # Concatenate along sequence dimension: (B, 3T, 5)
+        tokens = torch.cat([left_tokens, right_tokens, center_tokens], dim=1)
 
         # Project to d_model
-        x = self.point_proj(tokens)  # (B, 2T, d_model)
+        x = self.point_proj(tokens)  # (B, 3T, d_model)
 
-        # Add positional embeddings for lane tokens
-        seq_len = 2 * T
+        # Positional embeddings for lane tokens
+        seq_len = 3 * T
         pos_idx = torch.arange(seq_len, device=device)
-        pos_emb = self.track_pos_embed(pos_idx)[None, :, :]  # (1, 2T, d_model)
-        memory = x + pos_emb  # (B, 2T, d_model)
+        pos_emb = self.track_pos_embed(pos_idx)[None, :, :]  # (1, 3T, d_model)
+        memory = x + pos_emb  # (B, 3T, d_model)
 
-        # Prepare learned queries (waypoint latents)
-        # query_embed.weight: (n_waypoints, d_model)
+        # Learned queries (waypoint latents)
         queries = self.query_embed.weight.unsqueeze(0).expand(B, -1, -1)  # (B, n_waypoints, d_model)
 
         # Decoder: queries attend over memory
         out = self.decoder(tgt=queries, memory=memory)  # (B, n_waypoints, d_model)
         out = self.norm(out)
 
-        # Predict (x, z) for each waypoint
+        # Predict (coord0, coord1) for each waypoint
         waypoints = self.output_head(out)  # (B, n_waypoints, 2)
         return waypoints
 
