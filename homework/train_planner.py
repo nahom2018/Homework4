@@ -4,8 +4,8 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
-from homework.models import MLPPlanner, TransformerPlanner, CNNPlanner, save_model
 from homework.datasets.road_dataset import RoadDataset
+from homework.models import MLPPlanner, TransformerPlanner, CNNPlanner, save_model
 
 
 def get_model(name):
