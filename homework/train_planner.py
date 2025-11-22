@@ -12,7 +12,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
-from datasets.road_dataset import RoadDataset
+from .datasets.road_dataset import RoadDataset
 from models import MLPPlanner, TransformerPlanner, CNNPlanner, save_model
 
 
