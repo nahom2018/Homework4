@@ -49,6 +49,9 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
 
         loss = criterion(preds, batch["waypoints"].to(device))
         loss.backward()
+        if isinstance(model, TransformerPlanner):
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+
         optimizer.step()
 
         total_loss += loss.item()
