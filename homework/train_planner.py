@@ -94,7 +94,8 @@ def main():
         print(f"Epoch {epoch+1}/{args.epochs} | Train Loss: {train_loss:.4f}")
 
     # Save model
-    save_model(model)
+    path = save_model(model)
+    print("MODEL SAVED AT:", path)
     print("\nModel saved successfully!\n")
 
 
