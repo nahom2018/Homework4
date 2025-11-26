@@ -35,29 +35,34 @@ def train_one_epoch(model, loader, optimizer, device):
     model.train()
     total_loss = 0.0
 
+    is_cnn = isinstance(model, CNNPlanner)
+
     for batch in loader:
         optimizer.zero_grad()
 
-        if "image" in batch:
+        if is_cnn:
             preds = model(batch["image"].to(device))
         else:
             preds = model(
                 track_left=batch["track_left"].to(device),
-                track_right=batch["track_right"].to(device)
+                track_right=batch["track_right"].to(device),
             )
 
         target = batch["waypoints"].to(device)
         mask = batch["waypoints_mask"].to(device)
 
-        loss = masked_l1_loss(preds, target, mask)
+        # Masked L1 loss
+        mask = mask.unsqueeze(-1)
+        loss = torch.sum(mask * torch.abs(preds - target)) / torch.sum(mask)
+
         loss.backward()
-
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-
         optimizer.step()
+
         total_loss += loss.item()
 
     return total_loss / len(loader)
+
 
 
 def main():
