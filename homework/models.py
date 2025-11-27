@@ -38,7 +38,7 @@ class MLPPlanner(nn.Module):
         for dim_out in hidden_sizes:
             layers.append(nn.Linear(dim_in, dim_out))
             layers.append(nn.ReLU(inplace=True))
-            layers.append(nn.Dropout(0.2))  # Increased dropout
+            layers.append(nn.Dropout(0.3))  # Increased dropout
             dim_in = dim_out
         layers.append(nn.Linear(dim_in, output_dim))
 
