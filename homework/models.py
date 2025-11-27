@@ -123,6 +123,7 @@ class TransformerPlanner(nn.Module):
         return out.view(B, self.n_waypoints, 2)
 
 
+
 class ResidualBlock(nn.Module):
     """
     Basic ResNet-style residual block used in CNNPlanner.
