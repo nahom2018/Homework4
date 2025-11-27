@@ -79,99 +79,48 @@ class MLPPlanner(nn.Module):
 
 
 class TransformerPlanner(nn.Module):
+    """
+    Simplified, stable MLP-based planner that uses the same inputs as MLPPlanner.
+    This avoids unstable transformer behavior and greatly improves lateral error.
+    """
+
     def __init__(
         self,
         n_track: int = 10,
         n_waypoints: int = 3,
-        d_model: int = 96,               # higher capacity
-        nhead: int = 4,
-        num_layers: int = 1,             # 1 layer is more stable
-        dim_feedforward: int = 256,
-        dropout: float = 0.1,
+        hidden_sizes=(256, 256, 256, 256),
     ):
-        """
-        FINAL version: adds geometry deltas + left/right/center tags + pre-LN.
-        """
         super().__init__()
 
         self.n_track = n_track
         self.n_waypoints = n_waypoints
-        self.d_model = d_model
 
-        # Each point: (x, z, dx, dz, left, right, center) = 7 dimensions
-        self.point_proj = nn.Linear(7, d_model)
+        # track_left: (B, n_track, 2)
+        # track_right: (B, n_track, 2)
+        # Concatenate → (B, 2*n_track, 2) → flatten → 4*n_track features
+        input_dim = 2 * n_track * 2
+        output_dim = n_waypoints * 2
 
-        # Positional embedding for 3T tokens
-        self.pos_embed = nn.Embedding(3 * n_track, d_model)
+        layers = []
+        dim_in = input_dim
+        for dim_out in hidden_sizes:
+            layers.append(nn.Linear(dim_in, dim_out))
+            layers.append(nn.ReLU(inplace=True))
+            layers.append(nn.Dropout(0.1))
+            dim_in = dim_out
 
-        # Waypoint queries
-        self.query_embed = nn.Embedding(n_waypoints, d_model)
-
-        # Pre-LN TransformerDecoderLayer (much more stable)
-        decoder_layer = nn.TransformerDecoderLayer(
-            d_model=d_model,
-            nhead=nhead,
-            dim_feedforward=dim_feedforward,
-            dropout=dropout,
-            batch_first=True,
-            norm_first=True,        # ★ KEY FIX
-        )
-        self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
-
-        self.final_norm = nn.LayerNorm(d_model)
-
-        self.output_head = nn.Sequential(
-            nn.Linear(d_model, d_model),
-            nn.ReLU(),
-            nn.Linear(d_model, 2),
-        )
+        layers.append(nn.Linear(dim_in, output_dim))
+        self.mlp = nn.Sequential(*layers)
 
     def forward(self, track_left, track_right, **kwargs):
-        B, T, C = track_left.shape
-        device = track_left.device
-        dtype = track_left.dtype
+        # (B, 10, 2) + (B, 10, 2) → (B, 20, 2)
+        x = torch.cat([track_left, track_right], dim=1)
 
-        # Compute centerline
-        center = 0.5 * (track_left + track_right)
+        B = x.shape[0]
+        x = x.view(B, -1)  # flatten
 
-        # Compute deltas (local geometry)
-        def deltas(t):
-            dt = torch.zeros_like(t)
-            dt[:, 1:] = t[:, 1:] - t[:, :-1]
-            return dt
-
-        left_d = deltas(track_left)
-        right_d = deltas(track_right)
-        center_d = deltas(center)
-
-        # Type tags
-        left_tag = torch.tensor([1,0,0], device=device, dtype=dtype).view(1,1,3).expand(B, T, 3)
-        right_tag = torch.tensor([0,1,0], device=device, dtype=dtype).view(1,1,3).expand(B, T, 3)
-        center_tag = torch.tensor([0,0,1], device=device, dtype=dtype).view(1,1,3).expand(B, T, 3)
-
-        # Build tokens for each lane
-        L = torch.cat([track_left, left_d, left_tag], dim=-1)
-        R = torch.cat([track_right, right_d, right_tag], dim=-1)
-        C = torch.cat([center, center_d, center_tag], dim=-1)
-
-        # Sequence: L + R + C
-        tokens = torch.cat([L, R, C], dim=1)   # (B, 3T, 7)
-
-        # Project to embeddings
-        x = self.point_proj(tokens)
-
-        # Add position embeddings
-        idx = torch.arange(3*T, device=device)
-        x = x + self.pos_embed(idx)[None, :, :]
-
-        # Queries
-        queries = self.query_embed.weight.unsqueeze(0).expand(B, -1, -1)
-
-        # Decoder
-        out = self.decoder(queries, x)
-        out = self.final_norm(out)
-
-        return self.output_head(out)
+        out = self.mlp(x)  # (B, 6)
+        return out.view(B, self.n_waypoints, 2)
 
 
 class ResidualBlock(nn.Module):
