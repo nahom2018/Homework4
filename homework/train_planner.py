@@ -51,9 +51,11 @@ def train_one_epoch(model, loader, optimizer, device):
         target = batch["waypoints"].to(device)
         mask = batch["waypoints_mask"].to(device)
 
-        # Masked L1 loss
+
+        # Masked L2 (MSE) loss: Penalizes large errors (like 0.973) more.
         mask = mask.unsqueeze(-1)
-        loss = torch.sum(mask * torch.abs(preds - target)) / torch.sum(mask)
+        squared_error = (preds - target) ** 2
+        loss = torch.sum(mask * squared_error) / torch.sum(mask)
 
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)

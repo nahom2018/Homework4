@@ -38,7 +38,7 @@ class MLPPlanner(nn.Module):
         for dim_out in hidden_sizes:
             layers.append(nn.Linear(dim_in, dim_out))
             layers.append(nn.ReLU(inplace=True))
-            layers.append(nn.Dropout(p=0.1))
+            layers.append(nn.Dropout(0.2))  # Increased dropout
             dim_in = dim_out
         layers.append(nn.Linear(dim_in, output_dim))
 
@@ -85,10 +85,11 @@ class TransformerPlanner(nn.Module):
     """
 
     def __init__(
-        self,
-        n_track: int = 10,
-        n_waypoints: int = 3,
-        hidden_sizes=(256, 256, 256, 256),
+            self,
+            n_track: int = 10,
+            n_waypoints: int = 3,
+            # Change this tuple:
+            hidden_sizes=(128, 256, 256, 128),
     ):
         super().__init__()
 
@@ -106,7 +107,7 @@ class TransformerPlanner(nn.Module):
         for dim_out in hidden_sizes:
             layers.append(nn.Linear(dim_in, dim_out))
             layers.append(nn.ReLU(inplace=True))
-            layers.append(nn.Dropout(0.1))
+            layers.append(nn.Dropout(0.2))  # Increased dropout
             dim_in = dim_out
 
         layers.append(nn.Linear(dim_in, output_dim))
