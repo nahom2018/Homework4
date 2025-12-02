@@ -17,6 +17,16 @@ from models import MLPPlanner, TransformerPlanner, CNNPlanner, save_model
 
 from homework.datasets.road_dataset import load_data
 
+def masked_l1_loss(pred, target, mask):
+    # mask shape: (B, 3)
+    # pred, target: (B, 3, 2)
+
+    mask = mask.unsqueeze(-1)        # (B, 3, 1)
+
+    loss = torch.abs(pred - target)  # (B, 3, 2)
+    loss = loss * mask               # ignore invalid points
+
+    return loss.sum() / mask.sum()
 
 
 def get_model(name):
@@ -30,7 +40,7 @@ def get_model(name):
         raise ValueError(f"Unknown model {name}")
 
 
-def train_one_epoch(model, loader, optimizer, criterion, device):
+def train_one_epoch(model, loader, optimizer, device):
     model.train()
     total_loss = 0.0
 
@@ -41,19 +51,26 @@ def train_one_epoch(model, loader, optimizer, criterion, device):
 
         if use_cnn:
             preds = model(batch["image"].to(device))
+            target = batch["waypoints"].to(device)
+            mask   = batch["waypoints_mask"].to(device)
+            loss = masked_l1_loss(preds, target, mask)
+
         else:
             preds = model(
                 track_left=batch["track_left"].to(device),
                 track_right=batch["track_right"].to(device),
             )
+            target = batch["waypoints"].to(device)
+            mask   = batch["waypoints_mask"].to(device)
+            loss = masked_l1_loss(preds, target, mask)
 
-        loss = criterion(preds, batch["waypoints"].to(device))
         loss.backward()
         optimizer.step()
 
         total_loss += loss.item()
 
     return total_loss / len(loader)
+
 
 
 def main():
@@ -86,7 +103,7 @@ def main():
     # Model setup
     model = get_model(args.model).to(device)
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
-    criterion = nn.L1Loss()
+
 
     # Training loop
     for epoch in range(args.epochs):
