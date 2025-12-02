@@ -107,7 +107,7 @@ def main():
 
     # Training loop
     for epoch in range(args.epochs):
-        train_loss = train_one_epoch(model, train_loader, optimizer, criterion, device)
+        train_loss = train_one_epoch(model, train_loader, optimizer, device)
         print(f"Epoch {epoch+1}/{args.epochs} | Train Loss: {train_loss:.4f}")
 
     # Save model
