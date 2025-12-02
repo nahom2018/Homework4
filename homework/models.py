@@ -122,15 +122,14 @@ class TransformerPlanner(nn.Module):
         # Sequence: L + R + C
         tokens = torch.cat([L, R, C], dim=1)   # (B, 3T, 7)
 
-        # Project to embeddings
         x = self.point_proj(tokens)
-
-        # Add position embeddings
-        idx = torch.arange(3*T, device=device)
+        x = F.dropout(x, p=0.1, training=self.training)
         x = x + self.pos_embed(idx)[None, :, :]
+        x = F.layer_norm(x, (self.d_model,))
 
         # Queries
         queries = self.query_embed.weight.unsqueeze(0).expand(B, -1, -1)
+        queries = F.layer_norm(queries, (self.d_model,))
 
         # Decoder
         out = self.decoder(queries, x)
