@@ -149,7 +149,9 @@ class TransformerPlanner(nn.Module):
         # 6. Transformer decoder
         # --------------------------------------------------------
         out = self.decoder(queries, x)
-        out = self.final
+        out = self.final_norm(out)
+
+        return self.output_head(out)
 
 
 class ResidualBlock(nn.Module):
