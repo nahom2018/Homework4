@@ -13,11 +13,9 @@ from models import MLPPlanner, TransformerPlanner, CNNPlanner, save_model
 from homework.datasets.road_dataset import load_data
 
 
-def masked_l1_loss(pred, target, mask, lateral_weight: float = 2.0):
+def masked_l1_loss(pred, target, mask):
     """
-    pred, target: (B, 3, 2) where
-      [:, :, 0] = x (lateral)
-      [:, :, 1] = z (longitudinal)
+    pred, target: (B, 3, 2)
     mask: (B, 3) for valid waypoints
     """
     # (B, 3, 1)
@@ -26,21 +24,11 @@ def masked_l1_loss(pred, target, mask, lateral_weight: float = 2.0):
     # (B, 3, 2)
     diff = torch.abs(pred - target)
 
-    # emphasize lateral (x) more than longitudinal (z)
-    # weights shape: (1, 1, 2) → broadcasts over batch & waypoints
-    weights = torch.tensor(
-        [lateral_weight, 1.0],
-        device=pred.device,
-        dtype=pred.dtype,
-    ).view(1, 1, 2)
-
-    diff = diff * weights
-
     # apply mask
     diff = diff * mask
 
-    # optional: normalize by weights.mean() to keep scale reasonable
-    return diff.sum() / (mask.sum() * weights.mean())
+    # average over valid entries
+    return diff.sum() / mask.sum()
 
 
 def get_model(name):
@@ -96,12 +84,12 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # -------------------------------------------------------
-    # Correct pipelines
+    # Pipelines
     # -------------------------------------------------------
     if args.model in ["mlp_planner", "transformer_planner"]:
-        transform = "state_only"      # <-- CRITICAL FIX
+        transform = "default"
     else:
-        transform = "default"         # CNN needs image
+        transform = "default"
 
     train_loader = load_data(
         dataset_path="../drive_data/train",
