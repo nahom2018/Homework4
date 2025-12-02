@@ -71,14 +71,14 @@ def main():
     # Load data
     train_loader = load_data(
         dataset_path="../drive_data/train",
-        transform_pipeline="default",
+        transform_pipeline="planner",
         batch_size=args.batch_size,
         shuffle=True,
     )
 
     val_loader = load_data(
         dataset_path="../drive_data/val",
-        transform_pipeline="default",
+        transform_pipeline="planner",
         batch_size=args.batch_size,
         shuffle=False,
     )
