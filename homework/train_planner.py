@@ -15,7 +15,8 @@ from torch.utils.data import DataLoader
 from homework.datasets.road_dataset import RoadDataset
 from models import MLPPlanner, TransformerPlanner, CNNPlanner, save_model
 
-from homework.datasets.road_dataset import load_data
+from homework.datasets.road_dataset import load_planner_data, load_image_data
+
 
 
 
@@ -69,19 +70,35 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # Load data
-    train_loader = load_data(
-        dataset_path="../drive_data/train",
-        transform_pipeline="planner",
-        batch_size=args.batch_size,
-        shuffle=True,
-    )
+    if args.model in ["mlp_planner", "transformer_planner"]:
+        # Use PLANNER loader (EgoTrackProcessor)
+        train_loader = load_planner_data(
+            dataset_path="../drive_data/train",
+            batch_size=args.batch_size,
+            shuffle=True,
+        )
 
-    val_loader = load_data(
-        dataset_path="../drive_data/val",
-        transform_pipeline="planner",
-        batch_size=args.batch_size,
-        shuffle=False,
-    )
+        val_loader = load_planner_data(
+            dataset_path="../drive_data/val",
+            batch_size=args.batch_size,
+            shuffle=False,
+        )
+
+    elif args.model == "cnn_planner":
+        # Use IMAGE loader (ImageLoader + normalization)
+        train_loader = load_image_data(
+            dataset_path="../drive_data/train",
+            batch_size=args.batch_size,
+            shuffle=True,
+        )
+
+        val_loader = load_image_data(
+            dataset_path="../drive_data/val",
+            batch_size=args.batch_size,
+            shuffle=False,
+        )
+    else:
+        raise ValueError(f"Unknown model {args.model}")
 
     # Model setup
     model = get_model(args.model).to(device)
