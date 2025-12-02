@@ -13,13 +13,34 @@ from models import MLPPlanner, TransformerPlanner, CNNPlanner, save_model
 from homework.datasets.road_dataset import load_data
 
 
-def masked_l1_loss(pred, target, mask):
-    # mask shape: (B, 3)
-    # pred, target: (B, 3, 2)
-    mask = mask.unsqueeze(-1)        # (B,3,1)
-    loss = torch.abs(pred - target)  # (B,3,2)
-    loss = loss * mask
-    return loss.sum() / mask.sum()
+def masked_l1_loss(pred, target, mask, lateral_weight: float = 2.0):
+    """
+    pred, target: (B, 3, 2) where
+      [:, :, 0] = x (lateral)
+      [:, :, 1] = z (longitudinal)
+    mask: (B, 3) for valid waypoints
+    """
+    # (B, 3, 1)
+    mask = mask.unsqueeze(-1)
+
+    # (B, 3, 2)
+    diff = torch.abs(pred - target)
+
+    # emphasize lateral (x) more than longitudinal (z)
+    # weights shape: (1, 1, 2) → broadcasts over batch & waypoints
+    weights = torch.tensor(
+        [lateral_weight, 1.0],
+        device=pred.device,
+        dtype=pred.dtype,
+    ).view(1, 1, 2)
+
+    diff = diff * weights
+
+    # apply mask
+    diff = diff * mask
+
+    # optional: normalize by weights.mean() to keep scale reasonable
+    return diff.sum() / (mask.sum() * weights.mean())
 
 
 def get_model(name):
