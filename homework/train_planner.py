@@ -15,7 +15,10 @@ from torch.utils.data import DataLoader
 from homework.datasets.road_dataset import RoadDataset
 from models import MLPPlanner, TransformerPlanner, CNNPlanner, save_model
 
-from homework.datasets.road_dataset import RoadDataset, Compose, ImageLoader, EgoTrackProcessor
+from homework.datasets.road_dataset import RoadDataset
+from homework.datasets.road_transforms import Compose, ImageLoader, EgoTrackProcessor
+
+
 from homework.datasets.road_utils import Track
 import glob
 
