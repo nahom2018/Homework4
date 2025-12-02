@@ -15,7 +15,50 @@ from torch.utils.data import DataLoader
 from homework.datasets.road_dataset import RoadDataset
 from models import MLPPlanner, TransformerPlanner, CNNPlanner, save_model
 
-from homework.datasets.road_dataset import load_planner_data, load_image_data
+from homework.datasets.road_dataset import RoadDataset, Compose, ImageLoader, EgoTrackProcessor
+from homework.datasets.road_utils import Track
+import glob
+
+def load_planner_dataset(dataset_path, batch_size, shuffle):
+    # dataset_path points to "drive_data/train" or "drive_data/val"
+    episode_paths = sorted(glob.glob(os.path.join(dataset_path, "*")))
+
+    datasets = []
+    for episode_path in episode_paths:
+        track = Track(os.path.join(episode_path, "track.npz"))
+
+        # Compose a planner-friendly transform
+        transform = Compose([
+            EgoTrackProcessor(track, n_track=10, n_waypoints=3),
+        ])
+
+        ds = RoadDataset(episode_path, transform_pipeline=None)
+        ds.transform = transform  # Manually override the transform!
+        datasets.append(ds)
+
+    from torch.utils.data import ConcatDataset
+    full = ConcatDataset(datasets)
+
+    return DataLoader(full, batch_size=batch_size, shuffle=shuffle)
+
+
+def load_cnn_dataset(dataset_path, batch_size, shuffle):
+    episode_paths = sorted(glob.glob(os.path.join(dataset_path, "*")))
+
+    datasets = []
+    for episode_path in episode_paths:
+        transform = Compose([
+            ImageLoader(episode_path),
+        ])
+        ds = RoadDataset(episode_path, transform_pipeline=None)
+        ds.transform = transform
+        datasets.append(ds)
+
+    from torch.utils.data import ConcatDataset
+    full = ConcatDataset(datasets)
+
+    return DataLoader(full, batch_size=batch_size, shuffle=shuffle)
+
 
 
 
@@ -71,30 +114,26 @@ def main():
 
     # Load data
     if args.model in ["mlp_planner", "transformer_planner"]:
-        # Use PLANNER loader (EgoTrackProcessor)
-        train_loader = load_planner_data(
-            dataset_path="../drive_data/train",
-            batch_size=args.batch_size,
+        train_loader = load_planner_dataset(
+            "../drive_data/train",
+            args.batch_size,
             shuffle=True,
         )
-
-        val_loader = load_planner_data(
-            dataset_path="../drive_data/val",
-            batch_size=args.batch_size,
+        val_loader = load_planner_dataset(
+            "../drive_data/val",
+            args.batch_size,
             shuffle=False,
         )
 
     elif args.model == "cnn_planner":
-        # Use IMAGE loader (ImageLoader + normalization)
-        train_loader = load_image_data(
-            dataset_path="../drive_data/train",
-            batch_size=args.batch_size,
+        train_loader = load_cnn_dataset(
+            "../drive_data/train",
+            args.batch_size,
             shuffle=True,
         )
-
-        val_loader = load_image_data(
-            dataset_path="../drive_data/val",
-            batch_size=args.batch_size,
+        val_loader = load_cnn_dataset(
+            "../drive_data/val",
+            args.batch_size,
             shuffle=False,
         )
     else:
