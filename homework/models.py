@@ -96,10 +96,12 @@ class TransformerPlanner(nn.Module):
         device = track_left.device
         dtype = track_left.dtype
 
-        # Compute centerline
+        # --------------------------------------------------------
+        # 1. Compute centerline
+        # --------------------------------------------------------
         center = 0.5 * (track_left + track_right)
 
-        # Compute deltas (local geometry)
+        # geometry deltas
         def deltas(t):
             dt = torch.zeros_like(t)
             dt[:, 1:] = t[:, 1:] - t[:, :-1]
@@ -109,33 +111,45 @@ class TransformerPlanner(nn.Module):
         right_d = deltas(track_right)
         center_d = deltas(center)
 
-        # Type tags
-        left_tag = torch.tensor([1,0,0], device=device, dtype=dtype).view(1,1,3).expand(B, T, 3)
-        right_tag = torch.tensor([0,1,0], device=device, dtype=dtype).view(1,1,3).expand(B, T, 3)
-        center_tag = torch.tensor([0,0,1], device=device, dtype=dtype).view(1,1,3).expand(B, T, 3)
+        # --------------------------------------------------------
+        # 2. Type tags
+        # --------------------------------------------------------
+        left_tag = torch.tensor([1, 0, 0], device=device, dtype=dtype).view(1, 1, 3).expand(B, T, 3)
+        right_tag = torch.tensor([0, 1, 0], device=device, dtype=dtype).view(1, 1, 3).expand(B, T, 3)
+        center_tag = torch.tensor([0, 0, 1], device=device, dtype=dtype).view(1, 1, 3).expand(B, T, 3)
 
-        # Build tokens for each lane
+        # --------------------------------------------------------
+        # 3. Build tokens (B, 3T, 7)
+        # --------------------------------------------------------
         L = torch.cat([track_left, left_d, left_tag], dim=-1)
         R = torch.cat([track_right, right_d, right_tag], dim=-1)
         C = torch.cat([center, center_d, center_tag], dim=-1)
 
-        # Sequence: L + R + C
-        tokens = torch.cat([L, R, C], dim=1)   # (B, 3T, 7)
+        tokens = torch.cat([L, R, C], dim=1)  # (B, 3T, 7)
 
+        # --------------------------------------------------------
+        # 4. Embed tokens + dropout + position encoding
+        # --------------------------------------------------------
         x = self.point_proj(tokens)
         x = F.dropout(x, p=0.1, training=self.training)
+
+        idx = torch.arange(3 * T, device=device)  # <--- MUST be BEFORE use
         x = x + self.pos_embed(idx)[None, :, :]
+
+        # normalize memory
         x = F.layer_norm(x, (self.d_model,))
 
-        # Queries
+        # --------------------------------------------------------
+        # 5. Queries (normalize BEFORE decoder)
+        # --------------------------------------------------------
         queries = self.query_embed.weight.unsqueeze(0).expand(B, -1, -1)
         queries = F.layer_norm(queries, (self.d_model,))
 
-        # Decoder
+        # --------------------------------------------------------
+        # 6. Transformer decoder
+        # --------------------------------------------------------
         out = self.decoder(queries, x)
-        out = self.final_norm(out)
-
-        return self.output_head(out)
+        out = self.final
 
 
 class ResidualBlock(nn.Module):
