@@ -127,7 +127,7 @@ class TransformerPlanner(nn.Module):
 
         tokens = torch.cat([L, R, C], dim=1)  # (B, 3T, 7)
 
-        # --------------------------------------------------------
+        # ---------------------------------------------------------
         # 4. Embed tokens + dropout + position encoding
         # --------------------------------------------------------
         x = self.point_proj(tokens)
