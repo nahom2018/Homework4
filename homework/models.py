@@ -10,27 +10,12 @@ INPUT_STD = [0.2064, 0.1944, 0.2252]
 
 
 class MLPPlanner(nn.Module):
-    def __init__(
-        self,
-        n_track: int = 10,
-        n_waypoints: int = 3,
-        hidden_sizes=(128, 256, 256, 128),
-    ):
-        """
-        Simple but fairly strong MLP that predicts waypoints from the
-        left and right track boundaries.
-
-        Args:
-            n_track (int): number of points on each side of the track
-            n_waypoints (int): number of waypoints to predict
-            hidden_sizes (tuple): sizes of hidden layers
-        """
+    def __init__(self, n_track=10, n_waypoints=3, hidden_sizes=(128,128,128)):
         super().__init__()
-
         self.n_track = n_track
         self.n_waypoints = n_waypoints
 
-        input_dim = 2 * n_track * 2  # left + right, each with (x, y)
+        input_dim = 2 * n_track * 2      # (left+right) × (x,z)
         output_dim = n_waypoints * 2
 
         layers = []
@@ -38,44 +23,24 @@ class MLPPlanner(nn.Module):
         for dim_out in hidden_sizes:
             layers.append(nn.Linear(dim_in, dim_out))
             layers.append(nn.ReLU(inplace=True))
-            layers.append(nn.Dropout(p=0.1))
             dim_in = dim_out
-        layers.append(nn.Linear(dim_in, output_dim))
 
+        layers.append(nn.Linear(dim_in, output_dim))
         self.mlp = nn.Sequential(*layers)
 
-    def forward(
-        self,
-        track_left: torch.Tensor,
-        track_right: torch.Tensor,
-        **kwargs,
-    ) -> torch.Tensor:
-        """
-        Predicts waypoints from the left and right boundaries of the track.
+    def forward(self, track_left, track_right, **kwargs):
+        # Concatenate boundary points → shape (B, 20, 2)
+        x = torch.cat([track_left, track_right], dim=1)
 
-        During test time, your model will be called with
-        model(track_left=..., track_right=...), so keep the function signature as is.
-
-        Args:
-            track_left (torch.Tensor): shape (b, n_track, 2)
-            track_right (torch.Tensor): shape (b, n_track, 2)
-
-        Returns:
-            torch.Tensor: future waypoints with shape (b, n_waypoints, 2)
-        """
-        # Concatenate left and right boundaries along the "point" dimension
-        x = torch.cat([track_left, track_right], dim=1)  # (B, 2*n_track, 2)
-
-        # Flatten per sample
+        # Flatten → shape (B, 40)
         B = x.shape[0]
-        x = x.view(B, -1)  # (B, 2*n_track*2)
+        x = x.view(B, -1)
 
-        # MLP prediction
-        out = self.mlp(x)  # (B, n_waypoints*2)
+        # (B, 6)
+        out = self.mlp(x)
 
-        # Reshape back to (B, n_waypoints, 2)
-        out = out.view(B, self.n_waypoints, 2)
-        return out
+        # reshape to (B, 3, 2)
+        return out.view(B, self.n_waypoints, 2)
 
 
 class TransformerPlanner(nn.Module):
