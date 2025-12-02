@@ -48,43 +48,40 @@ class TransformerPlanner(nn.Module):
         self,
         n_track: int = 10,
         n_waypoints: int = 3,
-        d_model: int = 96,               # higher capacity
+        d_model: int = 96,
         nhead: int = 4,
-        num_layers: int = 1,             # 1 layer is more stable
+        num_layers: int = 1,
         dim_feedforward: int = 256,
         dropout: float = 0.1,
     ):
-        """
-        FINAL version: adds geometry deltas + left/right/center tags + pre-LN.
-        """
         super().__init__()
 
         self.n_track = n_track
         self.n_waypoints = n_waypoints
         self.d_model = d_model
 
-        # Each point: (x, z, dx, dz, left, right, center) = 7 dimensions
+        # Each token = (x, z, dx, dz, left/right/center one-hot)
         self.point_proj = nn.Linear(7, d_model)
 
-        # Positional embedding for 3T tokens
+        # Per-token positional encoding
         self.pos_embed = nn.Embedding(3 * n_track, d_model)
 
-        # Waypoint queries
-        self.query_embed = nn.Embedding(n_waypoints, d_model)
+        # ★ Perceiver latent bottleneck (VERY IMPORTANT)
+        self.latents = nn.Parameter(torch.randn(1, 16, d_model))
 
-        # Pre-LN TransformerDecoderLayer (much more stable)
+        # Cross-attention: latents <-> tokens
         decoder_layer = nn.TransformerDecoderLayer(
             d_model=d_model,
             nhead=nhead,
             dim_feedforward=dim_feedforward,
             dropout=dropout,
             batch_first=True,
-            norm_first=True,        # ★ KEY FIX
+            norm_first=True,   # Pre-LN → required for stability
         )
         self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
 
+        # Normalize + output head
         self.final_norm = nn.LayerNorm(d_model)
-
         self.output_head = nn.Sequential(
             nn.Linear(d_model, d_model),
             nn.ReLU(),
@@ -92,66 +89,65 @@ class TransformerPlanner(nn.Module):
         )
 
     def forward(self, track_left, track_right, **kwargs):
-        B, T, C = track_left.shape
+        B, T, _ = track_left.shape
         device = track_left.device
         dtype = track_left.dtype
 
-        # --------------------------------------------------------
-        # 1. Compute centerline
-        # --------------------------------------------------------
+        # -----------------------------
+        # 1. Compute centerline & deltas
+        # -----------------------------
         center = 0.5 * (track_left + track_right)
 
-        # geometry deltas
-        def deltas(t):
-            dt = torch.zeros_like(t)
-            dt[:, 1:] = t[:, 1:] - t[:, :-1]
-            return dt
+        def deltas(v):
+            d = torch.zeros_like(v)
+            d[:, 1:] = v[:, 1:] - v[:, :-1]
+            return d
 
         left_d = deltas(track_left)
         right_d = deltas(track_right)
         center_d = deltas(center)
 
-        # --------------------------------------------------------
-        # 2. Type tags
-        # --------------------------------------------------------
-        left_tag = torch.tensor([1, 0, 0], device=device, dtype=dtype).view(1, 1, 3).expand(B, T, 3)
-        right_tag = torch.tensor([0, 1, 0], device=device, dtype=dtype).view(1, 1, 3).expand(B, T, 3)
-        center_tag = torch.tensor([0, 0, 1], device=device, dtype=dtype).view(1, 1, 3).expand(B, T, 3)
+        # -----------------------------
+        # 2. One-hot type tags
+        # -----------------------------
+        left_tag   = torch.tensor([1,0,0], device=device, dtype=dtype).view(1,1,3).expand(B,T,3)
+        right_tag  = torch.tensor([0,1,0], device=device, dtype=dtype).view(1,1,3).expand(B,T,3)
+        center_tag = torch.tensor([0,0,1], device=device, dtype=dtype).view(1,1,3).expand(B,T,3)
 
-        # --------------------------------------------------------
-        # 3. Build tokens (B, 3T, 7)
-        # --------------------------------------------------------
+        # final tokens shape: (B, 3T, 7)
         L = torch.cat([track_left, left_d, left_tag], dim=-1)
         R = torch.cat([track_right, right_d, right_tag], dim=-1)
         C = torch.cat([center, center_d, center_tag], dim=-1)
 
-        tokens = torch.cat([L, R, C], dim=1)  # (B, 3T, 7)
+        tokens = torch.cat([L, R, C], dim=1)       # (B, 3T, 7)
 
-        # ---------------------------------------------------------
-        # 4. Embed tokens + dropout + position encoding
-        # --------------------------------------------------------
-        x = self.point_proj(tokens)
-        x = F.dropout(x, p=0.1, training=self.training)
+        # -----------------------------
+        # 3. Embed tokens + positions
+        # -----------------------------
+        tok = self.point_proj(tokens)              # (B, 3T, d)
+        idx = torch.arange(3*T, device=device)
+        tok = tok + self.pos_embed(idx)[None, :, :]  # broadcast pos embed
 
-        idx = torch.arange(3 * T, device=device)  # <--- MUST be BEFORE use
-        x = x + self.pos_embed(idx)[None, :, :]
+        # -----------------------------
+        # 4. Perceiver-style latent array
+        # -----------------------------
+        lat = self.latents.expand(B, -1, -1)       # (B, 16, d)
 
-        # normalize memory
-        x = F.layer_norm(x, (self.d_model,))
+        # -----------------------------
+        # 5. Cross-attention decoding
+        # -----------------------------
+        x = self.decoder(lat, tok)                 # (B, 16, d)
+        x = self.final_norm(x)
 
-        # --------------------------------------------------------
-        # 5. Queries (normalize BEFORE decoder)
-        # --------------------------------------------------------
-        queries = self.query_embed.weight.unsqueeze(0).expand(B, -1, -1)
-        queries = F.layer_norm(queries, (self.d_model,))
+        # -----------------------------
+        # 6. Use first n_waypoints latents
+        # -----------------------------
+        wp = x[:, :self.n_waypoints, :]            # (B, 3, d)
 
-        # --------------------------------------------------------
-        # 6. Transformer decoder
-        # --------------------------------------------------------
-        out = self.decoder(queries, x)
-        out = self.final_norm(out)
-
-        return self.output_head(out)
+        # -----------------------------
+        # 7. Predict actual coordinates
+        # -----------------------------
+        return self.output_head(wp)                # (B, 3, 2)
 
 
 class ResidualBlock(nn.Module):
