@@ -15,15 +15,14 @@ from homework.datasets.road_dataset import load_data
 from models import MLPPlanner, TransformerPlanner, CNNPlanner, save_model
 
 
-def get_model(name):
-    if name == "mlp_planner":
-        return MLPPlanner(n_track=10, n_waypoints=3)
-    elif name == "transformer_planner":
-        return TransformerPlanner(n_track=10, n_waypoints=3)
-    elif name == "cnn_planner":
-        return CNNPlanner(n_waypoints=3)
-    else:
-        raise ValueError(f"Unknown model {name}")
+# ----------------------------
+# Utilities
+# ----------------------------
+def seed_everything(seed=0):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 def masked_l1_loss(pred, target, mask):
@@ -31,10 +30,34 @@ def masked_l1_loss(pred, target, mask):
     return torch.sum(mask * torch.abs(pred - target)) / torch.sum(mask)
 
 
+def compute_val_loss(model, loader, device):
+    model.eval()
+    total_loss = 0
+
+    is_cnn = isinstance(model, CNNPlanner)
+
+    with torch.no_grad():
+        for batch in loader:
+            if is_cnn:
+                preds = model(batch["image"].to(device))
+            else:
+                preds = model(
+                    track_left=batch["track_left"].to(device),
+                    track_right=batch["track_right"].to(device),
+                )
+
+            target = batch["waypoints"].to(device)
+            mask = batch["waypoints_mask"].to(device)
+
+            loss = masked_l1_loss(preds, target, mask)
+            total_loss += loss.item()
+
+    return total_loss / len(loader)
+
+
 def train_one_epoch(model, loader, optimizer, device):
     model.train()
     total_loss = 0.0
-
     is_cnn = isinstance(model, CNNPlanner)
 
     for batch in loader:
@@ -51,10 +74,7 @@ def train_one_epoch(model, loader, optimizer, device):
         target = batch["waypoints"].to(device)
         mask = batch["waypoints_mask"].to(device)
 
-        # Masked L1 loss
-        mask = mask.unsqueeze(-1)
-        loss = torch.sum(mask * torch.abs(preds - target)) / torch.sum(mask)
-
+        loss = masked_l1_loss(preds, target, mask)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
@@ -64,19 +84,23 @@ def train_one_epoch(model, loader, optimizer, device):
     return total_loss / len(loader)
 
 
-
+# ----------------------------
+# MAIN
+# ----------------------------
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, required=True)
     parser.add_argument("--epochs", type=int, default=40)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr", type=float, default=None)
     parser.add_argument("--batch_size", type=int, default=64)
     args = parser.parse_args()
 
     print(f"\nTraining {args.model} for {args.epochs} epochs...\n")
 
+    seed_everything(0)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
+    # Dataset
     train_loader = load_data(
         dataset_path=os.path.join(PARENT_DIR, "drive_data/train"),
         transform_pipeline="default",
@@ -91,17 +115,27 @@ def main():
         shuffle=False,
     )
 
-    model = get_model(args.model).to(device)
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    # Model
+    model = None
+    if args.model == "mlp_planner":
+        model = MLPPlanner()
+        lr = args.lr or 1e-3
+    elif args.model == "transformer_planner":
+        model = TransformerPlanner()
+        lr = args.lr or 1e-4      # critical!
+    elif args.model == "cnn_planner":
+        model = CNNPlanner()
+        lr = args.lr or 1e-4      # images need small LR
+    else:
+        raise ValueError("Unknown model")
 
+    model = model.to(device)
+
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
+
+    # Training Loop
     for epoch in range(args.epochs):
         train_loss = train_one_epoch(model, train_loader, optimizer, device)
-        print(f"Epoch {epoch+1}/{args.epochs} | Train Loss: {train_loss:.4f}")
-
-    path = save_model(model)
-    print("\nMODEL SAVED AT:", path)
-    print("Training completed.\n")
-
-
-if __name__ == "__main__":
-    main()
+        val_loss = compute_val_loss(model, val_loader, device)
+        s

@@ -80,48 +80,62 @@ class MLPPlanner(nn.Module):
 
 class TransformerPlanner(nn.Module):
     """
-    Simplified, stable MLP-based planner that uses the same inputs as MLPPlanner.
-    This avoids unstable transformer behavior and greatly improves lateral error.
+    Perceiver-style transformer planner.
+    Takes left/right boundaries → outputs 3 future waypoints.
     """
 
     def __init__(
-            self,
-            n_track: int = 10,
-            n_waypoints: int = 3,
-            # Change this tuple:
-            hidden_sizes=(128, 256, 256, 128),
+        self,
+        n_track: int = 10,
+        n_waypoints: int = 3,
+        d_model: int = 128,
+        nhead: int = 4,
+        num_layers: int = 2,
     ):
         super().__init__()
 
         self.n_track = n_track
         self.n_waypoints = n_waypoints
+        self.d_model = d_model
 
-        # track_left: (B, n_track, 2)
-        # track_right: (B, n_track, 2)
-        # Concatenate → (B, 2*n_track, 2) → flatten → 4*n_track features
-        input_dim = 2 * n_track * 2
-        output_dim = n_waypoints * 2
+        # Each lane boundary point = (x,y)
+        # Encode (x,y) → d_model
+        self.input_proj = nn.Linear(2, d_model)
 
-        layers = []
-        dim_in = input_dim
-        for dim_out in hidden_sizes:
-            layers.append(nn.Linear(dim_in, dim_out))
-            layers.append(nn.ReLU(inplace=True))
-            layers.append(nn.Dropout(0.2))  # Increased dropout
-            dim_in = dim_out
+        # Learned queries for each waypoint → (n_waypoints, d_model)
+        self.query_embed = nn.Embedding(n_waypoints, d_model)
 
-        layers.append(nn.Linear(dim_in, output_dim))
-        self.mlp = nn.Sequential(*layers)
+        # Build transformer decoder
+        decoder_layer = nn.TransformerDecoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            batch_first=True,     # IMPORTANT for (B, Seq, Dim) input
+        )
+        self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
+
+        # Output head: convert transformer output → 2D waypoint coordinates
+        self.output_layer = nn.Linear(d_model, 2)
 
     def forward(self, track_left, track_right, **kwargs):
-        # (B, 10, 2) + (B, 10, 2) → (B, 20, 2)
+        B = track_left.shape[0]
+
+        # Combine boundaries → (B, 20, 2)
         x = torch.cat([track_left, track_right], dim=1)
 
-        B = x.shape[0]
-        x = x.view(B, -1)  # flatten
+        # Project each (x,y) → d_model → (B, 20, d_model)
+        memory = self.input_proj(x)
 
-        out = self.mlp(x)  # (B, 6)
-        return out.view(B, self.n_waypoints, 2)
+        # Query embeddings → (n_waypoints, d_model) → expand to batch
+        queries = self.query_embed.weight.unsqueeze(0).expand(B, -1, -1)
+
+        # Cross-attention
+        # queries = target (3 queries)
+        # memory = source (20 lane points)
+        decoded = self.decoder(tgt=queries, memory=memory)   # (B, 3, d_model)
+
+        # Predict waypoint coordinates
+        out = self.output_layer(decoded)                     # (B, 3, 2)
+        return out
 
 
 
